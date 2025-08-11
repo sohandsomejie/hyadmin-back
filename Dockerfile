@@ -1,5 +1,5 @@
 # 使用 Node.js 20 Alpine 作为基础镜像
-FROM m.daocloud.io/docker.io/node:20-alpine
+FROM node:20-alpine
 
 # 启用 corepack 并设置 npm 镜像源
 WORKDIR .
