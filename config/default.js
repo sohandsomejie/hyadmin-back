@@ -1,6 +1,7 @@
 module.exports = {
   port: process.env.PORT || 3000,
   env: process.env.NODE_ENV || 'development',
+  appBaseUrl: process.env.APP_BASE_URL || 'http://localhost:3000',
   mysql: {
     host: process.env.DB_HOST || '192.168.31.2',
     port: Number(process.env.DB_PORT || 3306),

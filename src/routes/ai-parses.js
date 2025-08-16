@@ -7,6 +7,7 @@ const dao = require('../dao/ai-parses');
 const { koaBody } = require('koa-body');
 const FormData = require('form-data');
 const { log } = require('console');
+const config = require('../../config/default');
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024; // 8MB per file
 const ALLOWED_MIME = new Set(['image/png', 'image/jpeg']);
@@ -35,11 +36,14 @@ async function triggerRemoteWorkflow(job, endpoint, apiKey, options) {
 	// JSON call for Dify workflow execute API using remote_url image
 	if (!endpoint) return;
 	const f = global.fetch || (await import('node-fetch')).default;
-	const APP_BASE = (process.env.APP_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+	const APP_BASE = config.appBaseUrl.replace(/\/$/, '');
 	const fileVar = options?.fileVarName || 'images';
 	const responseMode = options?.responseMode || 'blocking';
 	const user = options?.user || 'web-user';
 	const inputs = Object.assign({}, options?.workflowInputs || {});
+	// 添加直接的 absoluteImageUrl 字段以满足远程工作流的要求
+	inputs.absoluteImageUrl = options?.absoluteImageUrl;
+	// 同时保持原有的文件数组格式以兼容其他工作流
 	const filesArray = Array.isArray(inputs[fileVar]) ? inputs[fileVar] : [];
 	filesArray.push({ type: 'image', transfer_method: 'remote_url', url: options?.absoluteImageUrl });
 	inputs[fileVar] = filesArray;
@@ -122,7 +126,7 @@ module.exports = (router, prefix = '') => {
 				};
 				const id = await dao.insertJob(job);
 				await dao.setProcessing(id).catch(() => {});
-				const APP_BASE = (process.env.APP_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+				const APP_BASE = config.appBaseUrl.replace(/\/$/, '');
 				const absoluteImageUrl = `${APP_BASE}/uploads/${filename}`;
 				const workflowInputs = safeParseJson(ctx.request.body?.workflow_inputs);
 				const fileVarName = ctx.request.body?.workflow_file_var || 'images';
