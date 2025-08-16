@@ -41,18 +41,37 @@ async function triggerRemoteWorkflow(job, endpoint, apiKey, options) {
 	const responseMode = options?.responseMode || 'blocking';
 	const user = options?.user || 'web-user';
 	const inputs = Object.assign({}, options?.workflowInputs || {});
-	// 添加直接的 absoluteImageUrl 字段以满足远程工作流的要求
-	inputs.absoluteImageUrl = options?.absoluteImageUrl;
+	
+	// 根据官方文档，文件类型变量应该是列表格式
+	// 每个元素包含：type, transfer_method, url 等字段
+	const imageFile = {
+		type: 'image',
+		transfer_method: 'remote_url',
+		url: options?.absoluteImageUrl,
+		filename: job.filename || 'image.jpg',
+		size: job.sizeBytes || 0
+	};
+	
+	// 设置 absoluteImageUrl 字段为文件对象列表
+	inputs.absoluteImageUrl = [imageFile];
+	
 	// 同时保持原有的文件数组格式以兼容其他工作流
 	const filesArray = Array.isArray(inputs[fileVar]) ? inputs[fileVar] : [];
-	filesArray.push({ type: 'image', transfer_method: 'remote_url', url: options?.absoluteImageUrl });
+	filesArray.push(imageFile);
 	inputs[fileVar] = filesArray;
 	inputs.job_id = job.id;
 	inputs.callback_url = `${APP_BASE}/api/v1/ai-parses/callback`;
 	const body = { inputs, response_mode: responseMode, user };
 	const headers = { 'content-type': 'application/json' };
 	if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-	console.log('[AI] Trigger start(JSON)', { endpoint, jobId: job.id, fileVar, absoluteImageUrl: options?.absoluteImageUrl });
+	console.log('[AI] Trigger start(JSON)', { 
+		endpoint, 
+		jobId: job.id, 
+		fileVar, 
+		absoluteImageUrl: options?.absoluteImageUrl, 
+		inputs,
+		body: JSON.stringify(body, null, 2)
+	});
 	try {
 		const res = await f(endpoint, { method: 'POST', headers, body: JSON.stringify(body) });
 		let text = '';
@@ -132,7 +151,19 @@ module.exports = (router, prefix = '') => {
 				const fileVarName = ctx.request.body?.workflow_file_var || 'images';
 				const responseMode = ctx.request.body?.workflow_response_mode || 'blocking';
 				const user = ctx.request.body?.workflow_user || 'web-user';
-				triggerRemoteWorkflow({ id, filename, mime }, workflow_url, workflow_api_key, { absoluteImageUrl, workflowInputs, fileVarName, responseMode, user }).catch(() => {});
+				triggerRemoteWorkflow({ 
+					id, 
+					filename, 
+					mime, 
+					sizeBytes: buffer.length,
+					contentSha256: sha256
+				}, workflow_url, workflow_api_key, { 
+					absoluteImageUrl, 
+					workflowInputs, 
+					fileVarName, 
+					responseMode, 
+					user 
+				}).catch(() => {});
 				results.push({ id, status: 'queued', createdAt: nowIso, url: `/uploads/${filename}` });
 			}
 
