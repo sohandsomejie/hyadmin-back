@@ -11,3 +11,4 @@ bam-auto-generate
 src/idl-api
 src/idl-types
 tsconfig.tsbuildinfo
+public/uploads/*

@@ -12,6 +12,7 @@
 - MemberRole：`trainee`(学员) | `senior`(高层) | `member`(成员) | `leader`(首领)
 - ParticipationStatus：`participated`(参与) | `leave`(请假) | `unknown`(未知) | `unset`(未设置)
 - LeaderboardSort：`score`(总分) | `avgScore`(均分) | `attendance`(出勤率)
+- AiParseStatus：`queued` | `processing` | `succeeded` | `failed` | `canceled` | `timeout`
 
 ## 通用分页参数
 
@@ -264,6 +265,155 @@
 
 ---
 
+## AI 图片解析 AI Parses（与场次关联）
+
+说明：解析任务与具体活动场次关联。前端以 multipart/form-data（二进制文件，支持多张）发起解析任务。后端保存到本地用于前端展示，并逐张以 multipart/form-data 调用远端 AI 工作流；AI 完成后回调，前端通过短轮询获取结果。
+
+### POST /api/v1/sessions/:sessionId/parses
+
+说明：为某个场次创建解析任务（需要 JWT）
+
+- Content-Type: `multipart/form-data`
+- 字段：
+  - `file`: 文件或文件数组（多选）
+  - `workflow_url`: 必填，远端 AI 工作流接收地址（必须是 http/https），服务端将以 multipart/form-data 逐张转发
+  - `workflow_api_key`: 必填，远端 AI 平台 API Key；服务端会以 `Authorization: Bearer <key>` 透传
+  - `request_id`: 可选，用于幂等（多图时服务端内部扩展为 `request_id#0`、`#1` ...）
+
+响应（单图）：
+
+```json
+{ "id": 123, "status": "queued", "createdAt": "2025-08-09T12:00:00Z", "url": "/uploads/abc.png" }
+```
+
+响应（多图）：
+
+```json
+{ "items": [ { "id": 123, "status": "queued", "createdAt": "2025-08-09T12:00:00Z", "url": "/uploads/1.png" }, { "id": 124, "status": "queued", "createdAt": "2025-08-09T12:00:00Z", "url": "/uploads/2.png" } ], "total": 2 }
+```
+
+说明：
+
+- 仅支持 `image/png`、`image/jpeg`；单文件默认上限 8MB（超限 413）
+- 幂等：若携带 `request_id`，多图将扩展为 `request_id#i`
+- 典型错误：400（参数）、401（未认证）、409（幂等冲突但无法复用）、413（正文过大）、500（服务器错误）
+
+示例（cURL）：
+
+单图上传：
+
+```
+curl -X POST "https://your-host/api/v1/sessions/123/parses" \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@/path/to/image1.jpg" \
+  -F "workflow_url=https://ai.example.com/ingest" \
+  -F "workflow_api_key=sk-xxxxx" \
+  -F "request_id=req-20250815-001"
+```
+
+多图上传：
+
+```
+curl -X POST "https://your-host/api/v1/sessions/123/parses" \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@/path/to/1.jpg" \
+  -F "file=@/path/to/2.png" \
+  -F "workflow_url=https://ai.example.com/ingest" \
+  -F "workflow_api_key=sk-xxxxx" \
+  -F "request_id=req-20250815-batch"
+```
+
+### GET /api/v1/sessions/:sessionId/parses
+
+说明：分页获取某场次的解析任务（需要 JWT）
+
+- Query：`page`（默认 1）、`pageSize`（默认 20）
+- 响应：
+
+```json
+{ "items": [ { "id": 123, "status": "processing", "url": "/uploads/abc.png", "data": null, "error": null, "updatedAt": "2025-08-09T12:00:05Z" } ], "total": 1 }
+```
+
+### GET /api/v1/ai-parses/:id
+
+说明：查询任务状态（需要 JWT），供前端短轮询
+
+响应：
+
+```json
+{ "id": 123, "status": "processing", "data": null, "error": null, "updatedAt": "2025-08-09T12:00:05Z" }
+```
+
+说明：当 `status` ∈ `succeeded|failed|canceled|timeout` 时为终态；`data` 为 AI 的结构化输出（JSON），失败时 `error` 携带原因。
+
+### POST /api/v1/ai-parses/callback
+
+说明：远端 AI 工作流回调（无需 JWT，但必须签名）。仅允许把 `queued|processing` 更新到终态。
+
+请求头：
+
+- `X-Timestamp`: 毫秒时间戳（示例：`1733800000000`），要求与服务器相差不超过 5 分钟
+- `X-Signature`: `HMAC-SHA256(body + "." + X-Timestamp, secret)` 十六进制或 Base64 编码
+
+请求体：
+
+```json
+{ "id": 123, "status": "succeeded", "data": { "text": "xxx" }, "ai_trace_id": "trace-abc" }
+```
+
+### POST /api/v1/ai-parses/:id/cancel
+
+说明：取消解析任务（需要 JWT）。若提供 `cancel_url`，会尝试通知远端 AI 取消；无论远端是否成功，服务端会将本地状态置为 `canceled`（仅当当前为 `queued|processing`）。
+
+- Body：
+
+```json
+{ "cancel_url": "https://ai.example.com/cancel", "workflow_api_key": "sk-xxxxx" }
+```
+
+- 响应：
+
+```json
+{ "id": 123, "status": "canceled" }
+```
+
+- 错误：
+  - 400：参数错误
+  - 401：未认证
+  - 404：任务不存在
+  - 409：任务已终态，或状态不可更新
+
+或失败：
+
+```json
+{ "id": 123, "status": "failed", "error": "model timeout", "ai_trace_id": "trace-abc" }
+```
+
+响应：
+
+```json
+{ "ok": true }
+```
+
+错误：
+
+- 400：参数格式错误
+- 401/403：签名校验失败或时间戳过期
+- 409：状态不可更新（已终态）
+- 404：任务不存在
+
+### （可选）DELETE /api/v1/ai-parses/:id
+
+说明：取消任务（需要 JWT）。若远端支持取消，则尝试远端取消并将本地状态设为 `canceled`。
+
+响应：
+
+```json
+{ "id": 123, "status": "canceled" }
+```
+
+---
+
 ## 错误格式
 
 - HTTP：400/401/403/404/409/422/500
@@ -280,3 +430,40 @@
 - 创建场次必须在同一事务里批量插入“正常”成员到参与表，默认 `status=unset`、`score=0`
 - 删除活动类型按需限制：若存在场次，是否禁止删除由业务决定
 - 时间统一存 UTC；前端展示按本地时区转换
+
+---
+
+## AI 解析任务对象（ParseJob）
+
+通用字段：
+
+```json
+{
+  "id": 123,
+  "sessionId": 456,
+  "url": "/uploads/abc.png",
+  "mime": "image/jpeg",
+  "status": "queued | processing | succeeded | failed | canceled | timeout",
+  "data": { },
+  "error": null,
+  "createdAt": "2025-08-09T12:00:00Z",
+  "updatedAt": "2025-08-09T12:00:05Z"
+}
+```
+
+状态机与回调：
+
+- 初始：`queued`
+- 触发远端成功后：`processing`
+- 终态：`succeeded | failed | canceled | timeout`
+- 回调接口仅允许将 `queued|processing` 更新为终态；重复回调按幂等处理（不更新已终态）
+
+文件访问：
+
+- 上传文件会保存到服务端 `public/uploads/` 目录，接口返回相对路径 `url`
+- 前端展示时请拼接服务端基础地址（例如 `https://your-host` + `url`）
+
+幂等建议：
+
+- 多图请求时服务端会扩展 `request_id` 为 `request_id#i`
+- 避免在短时间内用同一 `request_id` 重复提交相同的批次，可能因唯一约束导致冲突（409）
