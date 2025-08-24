@@ -21,6 +21,9 @@ module.exports = (router, prefix = '') => {
   sub.post('/', authMiddleware(), async (ctx) => {
     const body = ctx.request.body || {};
     if (!body.nickname) return badRequest(ctx, '缺少 nickname');
+    // 重名校验
+    const dup = await Members.existsNickname(body.nickname);
+    if (dup) return badRequest(ctx, '昵称已存在');
     const m = await Members.createMember(body);
     return created(ctx, m);
   });
@@ -34,9 +37,38 @@ module.exports = (router, prefix = '') => {
 
   // PUT /members/:id
   sub.put('/:id', authMiddleware(), async (ctx) => {
-    const m = await Members.updateMember(ctx.params.id, ctx.request.body || {});
+    const body = ctx.request.body || {};
+    if (body.nickname) {
+      const dup = await Members.existsNickname(body.nickname, ctx.params.id);
+      if (dup) return badRequest(ctx, '昵称已存在');
+    }
+    const m = await Members.updateMember(ctx.params.id, body);
     if (!m) return notFound(ctx);
     return ok(ctx, m);
+  });
+  // POST /members/generate  自动生成成员（若未传 nickname 则生成唯一昵称）
+  sub.post('/generate', authMiddleware(), async (ctx) => {
+    const body = ctx.request.body || {};
+    let nickname = body.nickname || null;
+    if (!nickname) {
+      // 生成唯一昵称：Member_YYYYMMDDHHmmss_随机4位
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      const stamp = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+      let base = `Member_${stamp}`;
+      nickname = base;
+      let tries = 0;
+      while (await Members.existsNickname(nickname)) {
+        const suffix = Math.random().toString(36).slice(2, 6);
+        nickname = `${base}_${suffix}`;
+        if (++tries > 5) break;
+      }
+    } else {
+      const dup = await Members.existsNickname(nickname);
+      if (dup) return badRequest(ctx, '昵称已存在');
+    }
+    const createdMember = await Members.createMember({ ...body, nickname });
+    return created(ctx, createdMember);
   });
 
   // PATCH /members/:id/status
@@ -46,6 +78,16 @@ module.exports = (router, prefix = '') => {
     if (!mm) return notFound(ctx);
     const m = await Members.updateMember(ctx.params.id, { status, leaveAt });
     return ok(ctx, m);
+  });
+
+  // DELETE /members/:id
+  sub.delete('/:id', authMiddleware(), async (ctx) => {
+    const id = ctx.params.id;
+    const exists = await Members.getMember(id);
+    if (!exists) return notFound(ctx);
+    const okDel = await Members.deleteMember(id);
+    if (!okDel) return notFound(ctx);
+    return ok(ctx, { id: String(id), deleted: true });
   });
 
   // GET /members/:id/participations

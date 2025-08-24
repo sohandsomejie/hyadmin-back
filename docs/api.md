@@ -71,6 +71,14 @@
 
 响应：成员对象
 
+校验与错误：
+
+- 昵称唯一：若已存在相同 `nickname`，返回 400
+
+```json
+{ "error": { "code": "DUPLICATE_NICKNAME", "message": "昵称已存在" } }
+```
+
 ### GET /members/:id
 
 说明：成员详情（对象）
@@ -83,6 +91,36 @@
 { "nickname": "漩涡鸣人", "qq": "10001", "status": "normal", "joinAt": "...", "role": "leader", "remark": "..." }
 ```
 
+校验与错误：
+
+- 昵称唯一：当更新 `nickname` 时会进行重名校验（排除自身），若重复返回 400
+
+```json
+{ "error": { "code": "DUPLICATE_NICKNAME", "message": "昵称已存在" } }
+```
+
+### POST /members/generate
+
+说明：生成成员。未提供 `nickname` 时自动生成唯一昵称（格式：`Member_YYYYMMDDHHmmss[_abcd]`）。
+
+请求体（可选字段与新增一致）：
+
+```json
+{ "qq": "10001", "status": "normal", "role": "member", "remark": "" }
+```
+
+也可显式传入 `nickname`，服务端仍会进行重名校验。
+
+响应：成员对象
+
+错误：
+
+- 400：昵称已存在
+
+```json
+{ "error": { "code": "DUPLICATE_NICKNAME", "message": "昵称已存在" } }
+```
+
 ### PATCH /members/:id/status（可选）
 
 说明：仅更新状态
@@ -92,6 +130,20 @@
 ```
 
 ### GET /members/:id/participations
+
+### DELETE /members/:id
+
+说明：删除成员（需要 JWT）。若存在参与记录，已通过外键设置为 `ON DELETE CASCADE` 自动级联删除。
+
+响应：
+
+```json
+{ "id": "m1", "deleted": true }
+```
+
+错误：
+
+- 404：成员不存在
 
 说明：成员历史参与记录（含场次信息）
 
@@ -195,12 +247,15 @@
 
 ### GET /sessions/:id/participations
 
-说明：获取某场次的参与记录（数组），每条记录包含成员昵称字段 `nickname`
+说明：获取某场次的参与记录（分页）
+
+- Query：`page`（默认 1）、`pageSize`（默认 20）
+- 响应：
 
 ```json
-[
+{ "items": [
   { "id": "p1", "sessionId": "s1", "memberId": "m1", "nickname": "鸣人", "status": "unset", "score": 0, "note": "", "setBy": "u1", "setAt": "..." }
-]
+], "total": 1 }
 ```
 
 ### POST /sessions/:id/participations/bulk-upsert
@@ -248,8 +303,47 @@
 ```json
 { "items": [
   { "member": { "id": "m1", "nickname": "鸣人", "role": "member" },
-    "totalScore": 300, "avgScore": 75, "attendance": 0.8, "times": 4 }
+    "totalScore": 300, 
+    "avgScore": 75, 
+    "attendance": 0.8, 
+    "times": 4,
+    "attendedTimes": 3,
+    "leaveTimes": 1,
+    "unknownTimes": 0 }
 ], "total": 1 }
+```
+
+**响应字段说明：**
+
+- `member`: 成员信息对象
+  - `id`: 成员ID
+  - `nickname`: 成员昵称
+  - `role`: 成员角色
+- `totalScore`: 总分数
+- `avgScore`: 平均分数
+- `attendance`: 出勤率（参与次数/总次数）
+- `times`: 总参与次数（包括所有状态）
+- `attendedTimes`: 实际参与次数（status='participated'）
+- `leaveTimes`: 请假次数（status='leave'）
+- `unknownTimes`: 未知状态次数（status='unknown'）
+
+**数据关系：**
+
+- `times = attendedTimes + leaveTimes + unknownTimes + unsetTimes`
+- `attendance = attendedTimes / times`
+- 所有次数字段均为非负整数
+
+**使用示例：**
+
+```javascript
+// 获取出勤率最高的前10名成员
+GET /api/v1/reports/leaderboard?sort=attendance&pageSize=10
+
+// 获取指定时间段内的统计
+GET /api/v1/reports/leaderboard?period=month&year=2025&month=8
+
+// 筛选特定活动类型
+GET /api/v1/reports/leaderboard?typeId=1&sort=avgScore
 ```
 
 ### （可选）GET /activity-types/:id/last-session-summary
@@ -267,7 +361,7 @@
 
 ## AI 图片解析 AI Parses（与场次关联）
 
-说明：解析任务与具体活动场次关联。前端以 multipart/form-data（二进制文件，支持多张）发起解析任务。后端保存到本地用于前端展示，并逐张以 multipart/form-data 调用远端 AI 工作流；AI 完成后回调，前端通过短轮询获取结果。
+说明：解析任务与具体活动场次关联。前端以 multipart/form-data（二进制文件，支持多张）发起解析任务。后端保存到本地用于前端展示，并调用 Dify Workflow JSON API（remote_url 模式传递图片链接）；AI 完成后回调，前端通过短轮询获取结果。
 
 ### POST /api/v1/sessions/:sessionId/parses
 
@@ -276,9 +370,14 @@
 - Content-Type: `multipart/form-data`
 - 字段：
   - `file`: 文件或文件数组（多选）
-  - `workflow_url`: 必填，远端 AI 工作流接收地址（必须是 http/https），服务端将以 multipart/form-data 逐张转发
+  - `workflow_url`: 必填，Dify 服务 API 基地址或运行地址（必须是 http/https）。
+    - 若为基础地址（如 `https://api.dify.ai/v1`），服务端会自动补全为 `.../workflows/run`
+    - 亦支持传入完整的 `.../workflows/{workflow_id}/run` 或 `.../workflows/run`
   - `workflow_api_key`: 必填，远端 AI 平台 API Key；服务端会以 `Authorization: Bearer <key>` 透传
   - `request_id`: 可选，用于幂等（多图时服务端内部扩展为 `request_id#0`、`#1` ...）
+  - `workflow_file_var`: 可选，Dify 工作流中文件变量名（默认 `images`）
+  - `workflow_response_mode`: 可选，`blocking|streaming`（默认 `blocking`）
+  - `workflow_user`: 可选，终端用户标识（默认 `web-user`）
 
 响应（单图）：
 
@@ -297,6 +396,7 @@
 - 仅支持 `image/png`、`image/jpeg`；单文件默认上限 8MB（超限 413）
 - 幂等：若携带 `request_id`，多图将扩展为 `request_id#i`
 - 典型错误：400（参数）、401（未认证）、409（幂等冲突但无法复用）、413（正文过大）、500（服务器错误）
+  - 远端 Dify 返回非 2xx 时，任务将置为 `failed`，`error` 字段包含远端错误（若可解析则包含 `code/message`）
 
 示例（cURL）：
 
@@ -348,12 +448,7 @@ curl -X POST "https://your-host/api/v1/sessions/123/parses" \
 
 ### POST /api/v1/ai-parses/callback
 
-说明：远端 AI 工作流回调（无需 JWT，但必须签名）。仅允许把 `queued|processing` 更新到终态。
-
-请求头：
-
-- `X-Timestamp`: 毫秒时间戳（示例：`1733800000000`），要求与服务器相差不超过 5 分钟
-- `X-Signature`: `HMAC-SHA256(body + "." + X-Timestamp, secret)` 十六进制或 Base64 编码
+说明：远端 AI 工作流回调（无需 JWT，当前未启用签名校验）。仅允许把 `queued|processing` 更新到终态。
 
 请求体：
 

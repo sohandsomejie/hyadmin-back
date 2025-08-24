@@ -13,6 +13,26 @@ async function listBySession(sessionId) {
   }
 }
 
+async function listBySessionPaged(sessionId, { limit = 20, offset = 0 } = {}) {
+  try {
+    const items = await query(
+      `SELECT p.*, m.nickname FROM participations p
+       LEFT JOIN members m ON p.member_id = m.id
+       WHERE p.session_id=?
+       ORDER BY p.id ASC
+       LIMIT ? OFFSET ?`,
+      [sessionId, Number(limit), Number(offset)]
+    );
+    const totalRows = await query(
+      `SELECT COUNT(*) AS c FROM participations WHERE session_id=?`,
+      [sessionId]
+    );
+    return { items, total: totalRows[0]?.c || 0 };
+  } catch (e) {
+    throw new Error('listBySessionPaged error: ' + e.message);
+  }
+}
+
 async function createOne(sessionId, { memberId, status = 'unset', score = 0, note = null }, operatorId) {
   try {
     const res = await exec(
@@ -69,6 +89,6 @@ async function bulkUpsert(sessionId, items, operatorId) {
   }
 }
 
-module.exports = { listBySession, createOne, updateOne, deleteOne, bulkUpsert };
+module.exports = { listBySession, listBySessionPaged, createOne, updateOne, deleteOne, bulkUpsert };
 
 

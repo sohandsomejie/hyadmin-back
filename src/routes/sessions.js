@@ -63,8 +63,11 @@ module.exports = (router, prefix = "") => {
 
   // GET /sessions/:id/participations
   sub.get("/:id/participations", authMiddleware(), async (ctx) => {
-    const items = await Parts.listBySession(ctx.params.id);
-    return ok(ctx, items);
+    const { page = 1, pageSize = 20 } = ctx.query;
+    const limit = Number(pageSize) || 20;
+    const offset = (Number(page) - 1) * limit;
+    const data = await Parts.listBySessionPaged(ctx.params.id, { limit, offset });
+    return ok(ctx, data);
   });
 
   // POST /sessions/:id/participations

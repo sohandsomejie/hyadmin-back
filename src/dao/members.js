@@ -28,6 +28,13 @@ async function getMember(id) {
 async function createMember(data) {
   try {
     const { nickname, qq = null, status = 'normal', joinAt = null, role = 'member', remark = null } = data;
+    if (!nickname) {
+      throw Object.assign(new Error('nickname is required'), { code: 'INVALID_PARAM' });
+    }
+    const dup = await existsNickname(nickname);
+    if (dup) {
+      throw Object.assign(new Error('nickname already exists'), { code: 'DUPLICATE_NICKNAME' });
+    }
     const res = await exec(
       'INSERT INTO members (nickname, qq, status, join_at, role, remark) VALUES (?,?,?,?,?,?)',
       [nickname, qq, status, joinAt, role, remark]
@@ -49,6 +56,13 @@ async function updateMember(id, data) {
     const leave_at = data.leaveAt ?? exists.leave_at;
     const role = data.role ?? exists.role;
     const remark = data.remark ?? exists.remark;
+    if (!nickname) {
+      throw Object.assign(new Error('nickname is required'), { code: 'INVALID_PARAM' });
+    }
+    const dup = await existsNickname(nickname, id);
+    if (dup) {
+      throw Object.assign(new Error('nickname already exists'), { code: 'DUPLICATE_NICKNAME' });
+    }
     await exec('UPDATE members SET nickname=?, qq=?, status=?, join_at=?, leave_at=?, role=?, remark=? WHERE id=?',
       [nickname, qq, status, join_at, leave_at, role, remark, id]);
     return getMember(id);
@@ -57,6 +71,24 @@ async function updateMember(id, data) {
   }
 }
 
-module.exports = { listMembers, getMember, createMember, updateMember };
+async function existsNickname(nickname, excludeId) {
+  const params = [nickname];
+  let sql = 'SELECT id FROM members WHERE nickname = ?';
+  if (excludeId) { sql += ' AND id <> ?'; params.push(excludeId); }
+  const rows = await query(sql, params);
+  return rows.length > 0;
+}
+
+async function deleteMember(id) {
+  try {
+    // 若存在外键（参与记录）已在 schema 中 ON DELETE CASCADE；此处直接删除
+    const res = await exec('DELETE FROM members WHERE id=?', [id]);
+    return res.affectedRows > 0;
+  } catch (e) {
+    throw new Error('deleteMember error: ' + e.message);
+  }
+}
+
+module.exports = { listMembers, getMember, createMember, updateMember, existsNickname, deleteMember };
 
 

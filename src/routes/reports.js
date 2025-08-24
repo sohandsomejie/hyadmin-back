@@ -43,6 +43,8 @@ module.exports = (router, prefix = '') => {
               SUM(p.score) as totalScore,
               AVG(p.score) as avgScore,
               SUM(CASE WHEN p.status='participated' THEN 1 ELSE 0 END) as attendedTimes,
+              SUM(CASE WHEN p.status='leave' THEN 1 ELSE 0 END) as leaveTimes,
+              SUM(CASE WHEN p.status='unknown' THEN 1 ELSE 0 END) as unknownTimes,
               COUNT(*) as totalTimes
        FROM participations p
        LEFT JOIN activity_sessions s ON s.id = p.session_id
@@ -61,7 +63,7 @@ module.exports = (router, prefix = '') => {
        ${where}`,
       params
     );
-
+    
     return ok(ctx, {
       items: rows.map(r => ({
         member: { id: String(r.member_id), nickname: r.nickname, role: r.role },
@@ -69,6 +71,9 @@ module.exports = (router, prefix = '') => {
         avgScore: Number(r.avgScore || 0),
         attendance: r.totalTimes ? Number(r.attendedTimes || 0) / Number(r.totalTimes || 1) : 0,
         times: Number(r.totalTimes || 0),
+        attendedTimes: Number(r.attendedTimes || 0),
+        leaveTimes: Number(r.leaveTimes || 0),
+        unknownTimes: Number(r.unknownTimes || 0),
       })),
       total: totalRows[0]?.c || 0,
     });
