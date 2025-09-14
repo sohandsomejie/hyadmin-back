@@ -89,6 +89,7 @@ async function triggerRemoteWorkflow(job, endpoint, apiKey, options) {
 		if (responseMode === 'blocking' && contentType.includes('application/json')) {
 			try {
 				const json = text ? JSON.parse(text) : {};
+				console.log('json',json)
 				const workflowRunId = json.workflow_run_id || json.id || null;
 				const taskId = json.task_id || null;
 				const dataObj = json.data.result || null;
