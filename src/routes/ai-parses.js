@@ -92,7 +92,7 @@ async function triggerRemoteWorkflow(job, endpoint, apiKey, options) {
 				console.log('json',json)
 				const workflowRunId = json.workflow_run_id || json.id || null;
 				const taskId = json.task_id || null;
-				const dataObj = json.data.outputs.result || null;
+				const dataObj = json.data || null;
 				const status = (dataObj && dataObj.status) || null;
 				const outputs = (dataObj && dataObj.outputs) || null;
 				const patch = { aiTraceId: workflowRunId, data: Object.assign({}, dataObj || {}, { workflow_run_id: workflowRunId, task_id: taskId }) };
